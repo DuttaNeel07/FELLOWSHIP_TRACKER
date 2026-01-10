@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+node_modules/
+npm-debug.log*
+yarn-error.log*
+data/
+downloads/
+*.html
+*.json
+.DS_Store

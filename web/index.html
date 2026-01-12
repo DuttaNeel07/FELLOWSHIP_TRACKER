@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fellowship Tracker 2026</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <div class="max-w-4xl mx-auto py-12 px-4">
+        <header class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-gray-900 mb-2">🎓 Fellowship Tracker</h1>
+            <p class="text-gray-600">Live deadlines scraped from official sources</p>
+        </header>
+
+        <div id="loading" class="text-center py-10 text-gray-500">Loading fellowships...</div>
+
+        <div class="bg-white shadow-md rounded-lg overflow-hidden hidden" id="table-container">
+            <table class="min-w-full leading-normal">
+                <thead>
+                    <tr class="bg-indigo-600 text-white">
+                        <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase tracking-wider">Fellowship Name</th>
+                        <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase tracking-wider">Deadline</th>
+                        <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase tracking-wider">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="fellowship-list">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // 1. Rename the variable to 'supabaseClient' to avoid the SyntaxError
+        const SUPABASE_URL = "https://yirpuodagmiaacfreumz.supabase.co";
+        const SUPABASE_KEY = "sb_publishable_oBOGNmgdd-j_h7XqYB_n2Q_mzyFkQB4";
+        
+        // Use 'supabase.createClient' but store it in 'supabaseClient'
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    
+        async function fetchFellowships() {
+            // Update the reference here as well
+            const { data, error } = await supabaseClient
+                .from('fellowships')
+                .select('*')
+                .order('created_at', { ascending: false });
+    
+            if (error) {
+                console.error("Error fetching data:", error);
+                return;
+            }
+    
+            const list = document.getElementById('fellowship-list');
+            const loading = document.getElementById('loading');
+            const container = document.getElementById('table-container');
+    
+            loading.classList.add('hidden');
+            container.classList.remove('hidden');
+    
+            if (data.length === 0) {
+                list.innerHTML = `<tr><td colspan="3" class="text-center py-10 text-gray-500">No data found in the database. Run your scraper!</td></tr>`;
+                return;
+            }
+    
+            list.innerHTML = data.map(f => `
+                <tr class="hover:bg-gray-50 transition">
+                    <td class="px-5 py-5 border-b border-gray-200 text-sm font-medium text-gray-900">${f.name}</td>
+                    <td class="px-5 py-5 border-b border-gray-200 text-sm">
+                        <span class="px-2 py-1 font-semibold leading-tight ${f.deadline === 'Check Website' ? 'text-red-700 bg-red-100' : 'text-green-700 bg-green-100'} rounded-full">
+                            ${f.deadline}
+                        </span>
+                    </td>
+                    <td class="px-5 py-5 border-b border-gray-200 text-sm">
+                        <a href="${f.apply_link}" target="_blank" class="text-indigo-600 hover:text-indigo-900 font-bold">Apply →</a>
+                    </td>
+                </tr>
+            `).join('');
+        }
+    
+        fetchFellowships();
+    </script>
+</body>
+</html>

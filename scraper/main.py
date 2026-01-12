@@ -80,7 +80,7 @@ async def main():
 
     async with AsyncWebCrawler(config=browser_cfg) as crawler:
         print(f"🗑️ Found {len(links)} global links. Clearing DB and deep-scanning...")
-        supabase.table("fellowships").delete().neq("id", 0).execute()
+        #supabase.table("fellowships").delete().neq("id", 0).execute()
 
         for i, link in enumerate(links[:300]): # Limit to top 300 unique results
             print(f"🔄 Processing ({i+1}/{len(links)}): {link}")
@@ -91,12 +91,14 @@ async def main():
                     name = clean_name(result.markdown, result.metadata.get('title', ''))
                     deadline = extract_deadline(result.markdown)
                     
-                    supabase.table("fellowships").insert({
+                    
+                    supabase.table("fellowships").upsert({
                         "name": name,
                         "deadline": deadline,
                         "apply_link": link
-                    }).execute()
-                    print(f"✅ Saved: {name}")
+                    }, on_conflict="apply_link").execute()
+                    
+                    print(f"✅ Synced: {name}")
                 await asyncio.sleep(1.5) # Gentle rate-limiting
             except Exception: print(f"🕒 Skipped (Timeout/Error): {link}")
 

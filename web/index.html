@@ -6,24 +6,50 @@
     <title>Fellowship Tracker 2026</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-</head>
-<body class="bg-gray-50 min-h-screen">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #000000;
+            background-image: radial-gradient(#1a1a1a 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
 
-    <div class="max-w-4xl mx-auto py-12 px-4">
-        <header class="text-center mb-12">
-            <h1 class="text-4xl font-bold text-gray-900 mb-2">🎓 Fellowship Tracker</h1>
-            <p class="text-gray-600">Live deadlines scraped from official sources</p>
+        .pb-card {
+            background-color: #0d0d0d;
+            border: 1px solid #1f2937;
+        }
+
+        .pb-green { color: #4ade80; }
+
+        /* Custom scrollbar for terminal feel */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: #000; }
+        ::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4ade80; }
+    </style>
+</head>
+<body class="text-gray-300 min-h-screen selection:bg-green-500/30">
+
+    <div class="max-w-6xl mx-auto py-12 px-4">
+        <header class="mb-12">
+            <h1 class="text-5xl md:text-7xl font-bold text-white tracking-tighter">
+                Fellowship <span class="pb-green">Tracker</span>
+            </h1>
         </header>
 
-        <div id="loading" class="text-center py-10 text-gray-500">Loading fellowships...</div>
+        <div id="loading" class="text-center py-10 pb-green animate-pulse">
+            [ INITIALIZING_DATA_STREAM... ]
+        </div>
 
-        <div class="bg-white shadow-md rounded-lg overflow-hidden hidden" id="table-container">
-            <table class="min-w-full leading-normal">
+        <div class="overflow-x-auto pb-card rounded-xl shadow-2xl hidden" id="table-container">
+            <table class="w-full min-w-[800px] border-collapse table-fixed">
                 <thead>
-                    <tr class="bg-indigo-600 text-white">
-                        <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase tracking-wider">Fellowship Name</th>
-                        <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase tracking-wider">Deadline</th>
-                        <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase tracking-wider">Action</th>
+                    <tr class="bg-[#111] border-b border-gray-800 text-gray-500 text-[10px] uppercase tracking-[0.2em]">
+                        <th class="w-[55%] px-6 py-4 text-left font-bold">Opportunity_Name</th>
+                        <th class="w-[20%] px-6 py-4 text-center font-bold">Deadline</th>
+                        <th class="w-[25%] px-6 py-4 text-right font-bold">Action</th>
                     </tr>
                 </thead>
                 <tbody id="fellowship-list">
@@ -33,19 +59,15 @@
     </div>
 
     <script>
-        // 1. Rename the variable to 'supabaseClient' to avoid the SyntaxError
         const SUPABASE_URL = "https://yirpuodagmiaacfreumz.supabase.co";
         const SUPABASE_KEY = "sb_publishable_oBOGNmgdd-j_h7XqYB_n2Q_mzyFkQB4";
-        
-        // Use 'supabase.createClient' but store it in 'supabaseClient'
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     
         async function fetchFellowships() {
-            // Update the reference here as well
             const { data, error } = await supabaseClient
                 .from('fellowships')
                 .select('*')
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: true });
     
             if (error) {
                 console.error("Error fetching data:", error);
@@ -60,20 +82,24 @@
             container.classList.remove('hidden');
     
             if (data.length === 0) {
-                list.innerHTML = `<tr><td colspan="3" class="text-center py-10 text-gray-500">No data found in the database. Run your scraper!</td></tr>`;
+                list.innerHTML = `<tr><td colspan="3" class="text-center py-10 text-gray-500">NO_DATA_STREAM_FOUND</td></tr>`;
                 return;
             }
     
             list.innerHTML = data.map(f => `
-                <tr class="hover:bg-gray-50 transition">
-                    <td class="px-5 py-5 border-b border-gray-200 text-sm font-medium text-gray-900">${f.name}</td>
-                    <td class="px-5 py-5 border-b border-gray-200 text-sm">
-                        <span class="px-2 py-1 font-semibold leading-tight ${f.deadline === 'Check Website' ? 'text-red-700 bg-red-100' : 'text-green-700 bg-green-100'} rounded-full">
+                <tr class="hover:bg-[#151515] transition-colors border-b border-gray-900">
+                    <td class="px-6 py-6 text-sm font-medium text-white truncate">
+                        <span class="pb-green mr-2">#</span>${f.name}
+                    </td>
+                    <td class="px-6 py-6 text-center">
+                        <span class="inline-block px-3 py-1 text-[10px] font-bold uppercase border ${f.deadline === 'Check Website' ? 'text-red-400 border-red-900/50 bg-red-950/20' : 'pb-green border-green-900/50 bg-green-950/20'} rounded-sm whitespace-nowrap">
                             ${f.deadline}
                         </span>
                     </td>
-                    <td class="px-5 py-5 border-b border-gray-200 text-sm">
-                        <a href="${f.apply_link}" target="_blank" class="text-indigo-600 hover:text-indigo-900 font-bold">Apply →</a>
+                    <td class="px-6 py-6 text-right">
+                        <a href="${f.apply_link}" target="_blank" class="pb-green hover:underline text-xs font-bold tracking-tighter whitespace-nowrap">
+                            >> PULL_UP_DATA <<
+                        </a>
                     </td>
                 </tr>
             `).join('');

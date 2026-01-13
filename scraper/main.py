@@ -26,6 +26,12 @@ SEARCH_QUERIES = [
     "Qualcomm India technical internship 2026"
 ]
 
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/110.0"
+]
+
 def clean_name(markdown, metadata_title):
     """Surgically extracts the cleanest fellowship name."""
     h1_match = re.search(r'^#\s+(.*)', markdown, re.MULTILINE)
@@ -60,14 +66,38 @@ async def discover_300_links():
                     results = resp.json().get('organic', [])
                     for r in results:
                         link = r['link']
-                        if any(k in link.lower() for k in ['fellow', 'intern', 'scholar', 'program']):
+                        context = (r.get('title', '') + r.get('snippet', '')).lower()
+                        if not link.lower().endswith('.pdf') and any(k in context for k in ['intern', 'fellow', 'scholar', 'trainee']):
                             all_links.add(link)
+                    await asyncio.sleep(0.5)
                 except Exception as e: print(f"⚠️ Search Error: {e}")
     return list(all_links)
+
+async def process_link(crawler, run_cfg, link, semaphore):
+    async with semaphore:
+        try:
+            # Set a master timeout for this specific page visit
+            result = await asyncio.wait_for(crawler.arun(url=link, config=run_cfg), timeout=60.0)
+            
+            # QUALITY CHECK: Only save if page content is substantial
+            if result.success and len(result.markdown) > 500:
+                name = clean_name(result.markdown, result.metadata.get('title', ''))
+                deadline = extract_deadline(result.markdown)
+                
+                # UPSERT: Update existing or add new
+                supabase.table("fellowships").upsert({
+                    "name": name,
+                    "deadline": deadline,
+                    "apply_link": link
+                }, on_conflict="apply_link").execute()
+                print(f"✅ Synced: {name}")
+        except Exception as e:
+            print(f"🕒 Skipped {link}: {e}")
 
 async def main():
     links = await discover_300_links()
     if not links: return
+    semaphore = asyncio.Semaphore(3)
 
     # Browser config to block heavy assets and prevent "Sticking"
     browser_cfg = BrowserConfig(headless=True, extra_args=["--disable-gpu", "--no-sandbox"])
@@ -79,28 +109,12 @@ async def main():
     )
 
     async with AsyncWebCrawler(config=browser_cfg) as crawler:
-        print(f"🗑️ Found {len(links)} global links. Clearing DB and deep-scanning...")
-        #supabase.table("fellowships").delete().neq("id", 0).execute()
+        print(f"🚀 Processing {len(links)} links in parallel...")
 
-        for i, link in enumerate(links[:300]): # Limit to top 300 unique results
-            print(f"🔄 Processing ({i+1}/{len(links)}): {link}")
-            try:
-                # Master timeout per link to prevent hanging
-                result = await asyncio.wait_for(crawler.arun(url=link, config=run_cfg), timeout=50.0)
-                if result.success:
-                    name = clean_name(result.markdown, result.metadata.get('title', ''))
-                    deadline = extract_deadline(result.markdown)
-                    
-                    
-                    supabase.table("fellowships").upsert({
-                        "name": name,
-                        "deadline": deadline,
-                        "apply_link": link
-                    }, on_conflict="apply_link").execute()
-                    
-                    print(f"✅ Synced: {name}")
-                await asyncio.sleep(1.5) # Gentle rate-limiting
-            except Exception: print(f"🕒 Skipped (Timeout/Error): {link}")
+        tasks = [process_link(crawler, run_cfg, link, semaphore) for link in links]
+
+        await asyncio.gather(*tasks)
+        print("🎉 Database sync complete.")
 
 if __name__ == "__main__":
     asyncio.run(main())

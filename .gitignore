@@ -10,5 +10,4 @@ npm-debug.log*
 yarn-error.log*
 data/
 downloads/
-*.json
 .DS_Store

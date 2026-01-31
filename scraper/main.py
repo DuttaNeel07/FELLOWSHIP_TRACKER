@@ -20,7 +20,6 @@ collection = db.fellowships
 SERPER_KEY = os.getenv("SERPER_API_KEY")
 
 
-# High-Precision Queries for 300+ Indian Tech Links
 SEARCH_QUERIES = [
     "site:gov.in tech fellowship 2026 application",
     "site:edu.in software engineering internship summer 2026",

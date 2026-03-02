@@ -28,9 +28,13 @@ if not MONGO_URL:
 else:
     print("✅ API successfully connected to MongoDB Atlas")
 
-client = AsyncIOMotorClient(MONGO_URL)
-db = client.fellowship_tracker  
-collection = db.fellowships     
+import typing
+import typing_extensions
+from typing import Any
+
+client: Any = AsyncIOMotorClient(MONGO_URL)
+db: Any = client.fellowship_tracker  
+collection: Any = db.fellowships     
 
 @app.get("/")
 async def read_index():

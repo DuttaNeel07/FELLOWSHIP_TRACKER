@@ -8,7 +8,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 import google.generativeai as genai
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode # type: ignore
 
 # Load Environment Variables
 env_path = Path(__file__).parent.parent / '.env'
@@ -16,9 +16,11 @@ load_dotenv(dotenv_path=env_path)
 
 # Database Setup
 MONGO_URL = os.getenv("MONGO_URL")
-client = AsyncIOMotorClient(MONGO_URL)
-db = client.fellowship_tracker
-collection = db.fellowships
+from typing import Any
+
+client: Any = AsyncIOMotorClient(MONGO_URL)
+db: Any = client.fellowship_tracker
+collection: Any = db.fellowships
 
 # API Keys
 SERPER_KEY = os.getenv("SERPER_API_KEY")
@@ -75,12 +77,15 @@ async def generate_search_queries():
     Return ONLY a JSON array of strings. Example: ["query 1", "query 2"]
     """
     
-    ai_queries = []
+    from typing import List
+    ai_queries: List[str] = []
     for attempt in range(3):
         try:
             response = await model.generate_content_async(prompt)
             text = response.text.replace("```json", "").replace("```", "").strip()
-            ai_queries = json.loads(text)
+            import json
+            parsed = json.loads(text)
+            ai_queries = [str(item) for item in parsed]
             print(f"✅ AI: Generated {len(ai_queries)} queries.")
             break
         except Exception as e:

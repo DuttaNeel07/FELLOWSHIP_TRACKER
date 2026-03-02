@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Query
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from motor.motor_asyncio import AsyncIOMotorClient
-from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
 import uvicorn
@@ -31,13 +32,19 @@ client     = AsyncIOMotorClient(MONGO_URL)
 db         = client.fellowship_tracker
 collection = db.fellowships
 
+ROOT_DIR = Path(__file__).parent.parent
+
+@app.get("/", include_in_schema=False)
+async def serve_frontend():
+    return FileResponse(ROOT_DIR / "index.html")
+
 
 @app.get("/api/fellowships")
 async def get_fellowships(
-    tag:     str = Query(None, description="Filter by tag e.g. open-source, research"),
-    open:    bool = Query(None, description="Filter by is_open status"),
-    search:  str = Query(None, description="Search by name or org"),
-    limit:   int = Query(100, le=200),
+    tag:    str  = Query(None, description="Filter by tag e.g. open-source, research"),
+    open:   bool = Query(None, description="Filter by is_open status"),
+    search: str  = Query(None, description="Search by name or org"),
+    limit:  int  = Query(100, le=200),
 ):
     query_filter = {}
 
@@ -51,40 +58,28 @@ async def get_fellowships(
             {"organization": {"$regex": search, "$options": "i"}},
         ]
 
-    cursor = (
-        collection
-        .find(query_filter)
-        .sort("trust_score", -1)
-        .limit(limit)
-    )
-
+    cursor = collection.find(query_filter).sort("trust_score", -1).limit(limit)
     results = []
     async for doc in cursor:
         doc["_id"] = str(doc["_id"])
         results.append(doc)
-
     return results
 
 
 @app.get("/api/tags")
 async def get_all_tags():
-    """Returns all distinct tags in the DB — useful for filter UI."""
     tags = await collection.distinct("tags")
     return sorted(tags)
 
 
 @app.get("/api/stats")
 async def get_stats():
-    total       = await collection.count_documents({})
-    open_count  = await collection.count_documents({"is_open": True})
+    total         = await collection.count_documents({})
+    open_count    = await collection.count_documents({"is_open": True})
     with_deadline = await collection.count_documents({
         "deadline": {"$nin": ["Check Website", "Rolling", None]}
     })
-    return {
-        "total":         total,
-        "open":          open_count,
-        "with_deadline": with_deadline,
-    }
+    return {"total": total, "open": open_count, "with_deadline": with_deadline}
 
 
 if __name__ == "__main__":

@@ -7,3 +7,4 @@ pydantic
 crawl4ai
 uvicorn
 httpx
+urllib3==2.2.3

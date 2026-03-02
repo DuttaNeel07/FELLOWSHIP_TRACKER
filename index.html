@@ -167,19 +167,25 @@
 
     // ── Render ───────────────────────────────────────────────────
     function deadlineBadge(deadline) {
-        if (!deadline || deadline === "Check Website")
-            return `<span class="tag tag-red">Check Site</span>`;
-        if (deadline === "Rolling")
-            return `<span class="tag">Rolling</span>`;
-        const d = new Date(deadline);
-        const now = new Date();
-        const daysLeft = Math.ceil((d - now) / 86400000);
-        if (daysLeft < 0)
-            return `<span class="tag tag-red">Closed</span>`;
-        if (daysLeft <= 14)
-            return `<span class="tag tag-red">${deadline}</span>`;
+    if (!deadline || deadline === "Check Website" || deadline === "null")
+        return `<span class="tag tag-red">Check Site</span>`;
+    
+    if (deadline.toLowerCase().includes("rolling"))
+        return `<span class="tag">Rolling</span>`;
+
+    const d = new Date(deadline);
+    if (isNaN(d.getTime())) {
+        // Fallback for strings like "March 2026"
         return `<span class="tag">${deadline}</span>`;
     }
+
+    const now = new Date();
+    const daysLeft = Math.ceil((d - now) / 86400000);
+    
+    if (daysLeft < 0) return `<span class="tag tag-red">Closed</span>`;
+    if (daysLeft <= 14) return `<span class="tag tag-red">${daysLeft} days left</span>`;
+    return `<span class="tag">${deadline}</span>`;
+}
 
     function modeBadge(mode) {
         if (!mode) return "";

@@ -37,14 +37,18 @@ Gemini automatically generates search queries, crawls official program pages, ex
 ```
 Fellowship_Tracker/
 ├── scraper/
-│   └── main.py          # AI scraper pipeline
+│   ├── main.py              # AI scraper pipeline (runs locally)
+│   └── requirements.txt     # Scraper-only dependencies (not deployed)
 ├── api/
-│   └── index.py         # FastAPI server + serves frontend
-├── index.html           # Frontend UI
-├── requirements.txt     # Python dependencies
-├── vercel.json          # Vercel deployment config
-└── .env                 # API keys (never commit this)
+│   └── index.py             # FastAPI server + serves frontend
+├── index.html               # Frontend UI
+├── requirements.txt         # API-only dependencies (deployed to Vercel)
+├── vercel.json              # Vercel deployment config
+├── .vercelignore            # Excludes scraper from Vercel bundle
+└── .env                     # API keys (never commit this)
 ```
+
+> **Why two `requirements.txt` files?** Vercel has a 500MB Lambda size limit. `crawl4ai` + `playwright` alone are ~400MB and are only needed for scraping locally. The deployed API only reads from MongoDB — it never scrapes.
 
 ---
 
@@ -78,7 +82,11 @@ venv\Scripts\activate
 ### 3. Install dependencies
 
 ```bash
+# API dependencies
 pip install -r requirements.txt
+
+# Scraper dependencies (local only)
+pip install -r scraper/requirements.txt
 playwright install chromium
 ```
 
@@ -116,12 +124,36 @@ Open **http://localhost:8000** in your browser.
 
 ## Deploying to Vercel
 
-### 1. Push to GitHub
+### 1. Create the required files
 
-```bash
-git add .
-git commit -m "update"
-git push
+**`requirements.txt`** (root — API only, no scraper packages):
+```
+fastapi
+motor
+dnspython
+python-dotenv
+pydantic
+uvicorn
+httpx
+```
+
+**`scraper/requirements.txt`** (local only — never deployed):
+```
+crawl4ai
+playwright
+google-genai
+httpx
+python-dotenv
+motor
+dnspython
+```
+
+**`.vercelignore`** (prevents scraper from being bundled):
+```
+scraper/
+venv/
+__pycache__/
+*.pyc
 ```
 
 ### 2. Add environment variables in Vercel
@@ -134,7 +166,13 @@ SERPER_API_KEY
 GEMINI_API_KEY
 ```
 
-### 3. Deploy
+### 3. Push to GitHub
+
+```bash
+git add .
+git commit -m "update"
+git push
+```
 
 Vercel auto-deploys on every push. The `vercel.json` routes all traffic through FastAPI:
 
@@ -158,22 +196,6 @@ Vercel auto-deploys on every push. The `vercel.json` routes all traffic through 
 | GET | `/api/fellowships` | All opportunities (supports `?tag=`, `?open=true`, `?search=`, `?limit=`) |
 | GET | `/api/stats` | Total, open, and deadline counts |
 | GET | `/api/tags` | All distinct tags in the database |
-
----
-
-## Requirements
-
-```
-fastapi
-motor
-dnspython
-python-dotenv
-google-genai
-pydantic
-crawl4ai
-uvicorn
-httpx
-```
 
 ---
 

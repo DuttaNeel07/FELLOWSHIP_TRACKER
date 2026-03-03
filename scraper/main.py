@@ -30,6 +30,7 @@ db           = mongo_client.fellowship_tracker
 collection   = db.fellowships
 
 groq_client = Groq(api_key=GROQ_KEY)
+ai_lock = asyncio.Lock()
 
 # ── CONFIRMED WORKING MODEL from your list() output ──────────────
 GROQ_MODEL  = "llama-3.3-70b-versatile"
@@ -66,8 +67,8 @@ BLACKLISTED_DOMAINS = {
 
 # ─────────────────────────── GEMINI WRAPPER ──────────────────────
 
-def ask_gemini(prompt: str, max_tokens: int = 2048) -> str:
-    """Call Groq — fast free tier, no aggressive sleep needed."""
+def ask_ai(prompt: str, max_tokens: int = 2048) -> str:
+    """Call Groq with automatic retry on rate limits."""
     for attempt in range(4):
         try:
             resp = groq_client.chat.completions.create(
@@ -99,6 +100,16 @@ def safe_parse_json(raw: str):
         pass
     return None
 
+async def get_existing_urls() -> set:
+    """Fetch all URLs already stored in MongoDB."""
+    cursor = collection.find({}, {"apply_link": 1, "_id": 0})
+    existing = set()
+    async for doc in cursor:
+        if doc.get("apply_link"):
+            existing.add(doc["apply_link"])
+    print(f"  📋 Found {len(existing)} already-scraped URLs in DB.")
+    return existing
+
 
 # ─────────────────────────── DOMAIN SCORING ──────────────────────
 
@@ -109,7 +120,8 @@ def get_domain_score(url: str) -> int:
     if any(e in u for e in [".ac.in", ".edu.in"]): return 95
     tier2 = ["lfx.linuxfoundation.org", "summerofcode.withgoogle.com",
              "cncf.io", "summerofbitcoin.org", "fossunited.org",
-             "jncasr.ac.in", "iitgn.ac.in", "ghc.anitab.org"]
+             "jncasr.ac.in", "iitgn.ac.in", "ghc.anitab.org",
+             "outreachy.org", "mlh.io", "anitab.org"]
     if any(t in u for t in tier2): return 98
     if any(a in u for a in ["internshala", "unstop", "naukri", "glassdoor", "indeed"]): return 30
     return 50
@@ -130,14 +142,15 @@ def generate_queries_with_ai() -> list[dict]:
 
     prompt = f"""You are helping find tech fellowships for Indian CS students in Bangalore.
 
-For each program below, generate exactly 2 Google search queries:
+For each program below, generate exactly 3 Google search queries:
 1. One targeting the official application page
-2. One targeting 2025 or 2026 deadlines
-
+2. One targeting 2026 or 2027 deadlines
+3. One targeting eligibility for Indian students
 Programs:
 {programs_list}
 
-Also suggest 5 additional relevant programs for: {json.dumps(STUDENT_PROFILE)}
+Also suggest 15 additional relevant programs
+Generate 3 queries each for the additional programs too.
 
 Return ONLY this JSON with no extra text or markdown:
 {{
@@ -149,7 +162,7 @@ Return ONLY this JSON with no extra text or markdown:
   ]
 }}"""
 
-    raw = ask_gemini(prompt, max_tokens=3000)
+    raw = ask_ai(prompt, max_tokens=3000)
     if not raw:
         print("  ⚠️  Gemini unavailable, using fallback queries.")
         return [{"name": p, "queries": [f"{p} 2026 official application", f"{p} deadline 2026"]}
@@ -173,17 +186,15 @@ async def serper_search(query: str, client: httpx.AsyncClient) -> list[str]:
     try:
         resp = await client.post(
             "https://google.serper.dev/search",
-            json={"q": query, "gl": "in", "num": 10},
+            json={"q": query, "gl": "in", "num": 20},
             headers=headers, timeout=15,
         )
         results = resp.json().get("organic", [])
         return [
             r.get("link", "") for r in results
-            if is_link_allowed(r.get("link", "")) and any(
-                k in (r.get("title","") + r.get("snippet","")).lower()
-                for k in ["intern", "fellow", "scholar", "mentorship", "apply", "stipend"]
-            )
+            if is_link_allowed(r.get("link", ""))
         ]
+
     except Exception as e:
         print(f"  ⚠️  Serper error: {e}")
         return []
@@ -203,10 +214,29 @@ async def collect_links(programs: list[dict]) -> list[tuple[int, str]]:
                         if hint and hint.lower() in link.lower():
                             score = min(score + 15, 100)
                         scored.append((score, link))
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
     scored.sort(key=lambda x: x[0], reverse=True)
     print(f"\n  📦 Collected {len(scored)} unique links.\n")
     return scored
+
+def deduplicate_by_domain(scored_links: list[tuple[int, str]], max_per_domain: int = 1) -> list[tuple[int, str]]:
+    """
+    Keep only the top N URLs per domain.
+    Prevents 5 links from summerofbitcoin.org, 4 from cncf.io etc.
+    """
+    from urllib.parse import urlparse
+    domain_count = {}
+    deduped = []
+
+    for score, url in scored_links:
+        domain = urlparse(url).netloc.replace("www.", "")
+        count = domain_count.get(domain, 0)
+        if count < max_per_domain:
+            deduped.append((score, url))
+            domain_count[domain] = count + 1
+
+    print(f"  🧹 Deduplicated: {len(scored_links)} → {len(deduped)} links (max {max_per_domain} per domain)\n")
+    return deduped
 
 
 # ─────────────────────────── STEP 3: AI RELEVANCE FILTER ─────────
@@ -214,30 +244,51 @@ async def collect_links(programs: list[dict]) -> list[tuple[int, str]]:
 def ai_relevance_check(links: list[str]) -> list[str]:
     if not links:
         return []
-    print(f"🤖 Gemini filtering {len(links)} links...")
-    numbered = "\n".join(f"{i+1}. {url}" for i, url in enumerate(links))
 
-    prompt = f"""Filter these URLs for a fellowship tracker for Indian CS students.
+    print(f"🤖 AI filtering {len(links)} links in batches...")
+    kept = []
+    batch_size = 25
 
-KEEP if: official fellowship/internship application or eligibility page.
-SKIP if: social media, news article, blog, job aggregator (Naukri, Internshala, Unstop).
+    for i in range(0, len(links), batch_size):
+        batch = links[i:i + batch_size]
+        numbered = "\n".join(f"{i+1}. {url}" for i, url in enumerate(batch))
 
-Return ONLY a JSON array of numbers to keep. Example: [1, 3, 5]
+        prompt = f"""You are filtering URLs for a fellowship/internship tracker for Indian CS students.
+
+Be LENIENT — when in doubt, KEEP the link.
+
+KEEP if the URL could lead to:
+- An official fellowship, internship, mentorship, or scholarship page
+- A program timeline, eligibility, or how-to-apply page
+- A research internship at any university or institute
+- A blog post or announcement FROM the official program org (e.g. cncf.io/blog)
+
+SKIP ONLY if clearly:
+- A job aggregator listing (Naukri, Internshala, Unstop, Glassdoor, Indeed)
+- Pure social media post
+- Completely unrelated to fellowships/internships
+
+Return ONLY a JSON array of numbers to keep. Example: [1, 2, 4, 5, 7]
 No explanation, no markdown.
 
 URLs:
 {numbered}"""
 
-    raw = ask_gemini(prompt, max_tokens=300)
-    if not raw:
-        return links
+        raw = ask_ai(prompt, max_tokens=200)
+        if not raw:
+            kept.extend(batch)
+            continue
 
-    parsed = safe_parse_json(raw)
-    if not isinstance(parsed, list):
-        return links
+        parsed = safe_parse_json(raw)
+        if not isinstance(parsed, list):
+            kept.extend(batch)
+            continue
 
-    kept = [links[i-1] for i in parsed if isinstance(i, int) and 1 <= i <= len(links)]
-    print(f"  ✅ Kept {len(kept)} / {len(links)} links.\n")
+        batch_kept = [batch[i-1] for i in parsed if isinstance(i, int) and 1 <= i <= len(batch)]
+        kept.extend(batch_kept)
+        print(f"  Batch {i//batch_size + 1}: kept {len(batch_kept)}/{len(batch)}")
+
+    print(f"  ✅ Total kept: {len(kept)} / {len(links)} links.\n")
     return kept
 
 
@@ -261,7 +312,7 @@ Return ONLY this JSON with no markdown:
   "tags": ["tag1", "tag2"]
 }}"""
 
-    raw = ask_gemini(prompt, max_tokens=800)
+    raw = ask_ai(prompt, max_tokens=800)
     if not raw:
         return {}
     result = safe_parse_json(raw)
@@ -280,7 +331,9 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
                 print(f"  🗑️  Skipping aggregator: {link}")
                 return
 
-            details = ai_extract_details(result.markdown, link)
+            async with ai_lock:
+                details = ai_extract_details(result.markdown, link)
+                await asyncio.sleep(1)
             if not details:
                 return
 
@@ -313,8 +366,16 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
 
 
 # ─────────────────────────── MAIN ────────────────────────────────
+async def ensure_indexes():
+    await collection.create_index("apply_link", unique=True)
+    await collection.create_index("last_updated")
+
+async def ping_mongo():
+    await mongo_client.admin.command("ping")
 
 async def main():
+    await ping_mongo()
+    await ensure_indexes()
     print("=" * 60)
     print("  FELLOWSHIP TRACKER — AI MODE")
     print(f"  Model: {GROQ_MODEL}")
@@ -328,7 +389,14 @@ async def main():
         print("❌ No links found. Check SERPER_API_KEY in .env")
         return
 
-    top_urls   = [url for _, url in scored_links[:40]]
+    scored_links  = deduplicate_by_domain(scored_links, max_per_domain=2)
+    existing_urls = await get_existing_urls()
+    
+    # Remove already-scraped links before AI filtering
+    fresh_links = [(sc, url) for sc, url in scored_links if url not in existing_urls]
+    print(f"  🆕 {len(fresh_links)} new links to process ({len(scored_links) - len(fresh_links)} already in DB, skipping)\n")
+
+    top_urls   = [url for _, url in fresh_links[:150]]
     final_urls = ai_relevance_check(top_urls)
     score_map  = {url: sc for sc, url in scored_links}
 
@@ -343,8 +411,11 @@ async def main():
     )
 
     async with AsyncWebCrawler() as crawler:
-        for url in final_urls:
-            await process_link(crawler, run_cfg, url, score_map.get(url, 50), semaphore)
+        tasks = [
+            process_link(crawler, run_cfg, url, score_map.get(url, 50), semaphore)
+            for url in final_urls
+        ]
+        await asyncio.gather(*tasks)
 
     print("\n🎉 Done! Database updated.")
 

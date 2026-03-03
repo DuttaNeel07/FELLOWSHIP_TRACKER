@@ -24,9 +24,9 @@ app.add_middleware(
 
 MONGO_URL = os.getenv("MONGO_URL")
 if not MONGO_URL:
-    print("❌ API: MONGO_URL not found")
+    print("API: MONGO_URL not found")
 else:
-    print("✅ API: Connected to MongoDB")
+    print("API: Connected to MongoDB")
 
 client     = AsyncIOMotorClient(MONGO_URL)
 db         = client.fellowship_tracker
@@ -43,7 +43,8 @@ async def serve_frontend():
 async def get_fellowships(
     tag:    str  = Query(None, description="Filter by tag e.g. open-source, research"),
     open:   bool = Query(None, description="Filter by is_open status"),
-    search: str  = Query(None, description="Search by name or org"),
+    search: str  = Query(None, description="Search by name or org"), 
+    mode:   str  = Query(None, description="Search by mode e.g. open-now, remote"),
     limit:  int  = Query(100, le=200),
 ):
     query_filter = {}
@@ -58,7 +59,7 @@ async def get_fellowships(
             {"organization": {"$regex": search, "$options": "i"}},
         ]
 
-    cursor = collection.find(query_filter).sort("trust_score", -1).limit(limit)
+    cursor = collection.find(query_filter).sort("name", 1).limit(limit)
     results = []
     async for doc in cursor:
         doc["_id"] = str(doc["_id"])

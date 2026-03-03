@@ -5,6 +5,12 @@ AI-Powered Fellowship & Internship Scraper
 
 import os
 import re
+import httpx
+from urllib.parse import urljoin
+from dotenv import load_dotenv
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from datetime import datetime
+from scraper.discord import send_discord_notification
 import json
 import asyncio
 import time
@@ -137,7 +143,8 @@ def is_link_allowed(url: str) -> bool:
 # ─────────────────────────── STEP 1: QUERY GENERATION ────────────
 
 def generate_queries_with_ai() -> list[dict]:
-    print("\n🤖 Gemini is generating search queries...")
+    print("\n🤖 AI is generating search queries...")
+
     programs_list = "\n".join(f"- {p}" for p in MUST_HAVE_PROGRAMS)
 
     prompt = f"""You are helping find tech fellowships for Indian CS students in Bangalore.
@@ -146,39 +153,90 @@ For each program below, generate exactly 3 Google search queries:
 1. One targeting the official application page
 2. One targeting 2026 or 2027 deadlines
 3. One targeting eligibility for Indian students
+
 Programs:
 {programs_list}
 
-Also suggest 15 additional relevant programs
+Also suggest 15 additional relevant programs.
 Generate 3 queries each for the additional programs too.
 
 Return ONLY this JSON with no extra text or markdown:
 {{
   "must_have": [
-    {{"name": "Program Name", "queries": ["query 1", "query 2"], "official_domain_hint": "domain.com"}}
+    {{"name": "Program Name", "queries": ["query 1", "query 2", "query 3"], "official_domain_hint": "domain.com"}}
   ],
   "additional": [
-    {{"name": "Program Name", "queries": ["query 1", "query 2"], "official_domain_hint": "domain.com"}}
+    {{"name": "Program Name", "queries": ["query 1", "query 2", "query 3"], "official_domain_hint": "domain.com"}}
   ]
 }}"""
 
     raw = ask_ai(prompt, max_tokens=3000)
+
     if not raw:
-        print("  ⚠️  Gemini unavailable, using fallback queries.")
-        return [{"name": p, "queries": [f"{p} 2026 official application", f"{p} deadline 2026"]}
-                for p in MUST_HAVE_PROGRAMS]
+        print("  ⚠️ AI unavailable, using fallback queries.")
+        return [
+            {
+                "name": p,
+                "queries": [
+                    f"{p} official application page",
+                    f"{p} deadline 2026",
+                    f"{p} eligibility for Indian students",
+                ],
+                "official_domain_hint": ""
+            }
+            for p in MUST_HAVE_PROGRAMS
+        ]
 
     data = safe_parse_json(raw)
+
     if not data or not isinstance(data, dict):
-        print("  ⚠️  JSON parse failed, using fallback queries.")
-        return [{"name": p, "queries": [f"{p} 2026 official application", f"{p} deadline 2026"]}
-                for p in MUST_HAVE_PROGRAMS]
+        print("  ⚠️ JSON parse failed, using fallback queries.")
+        return [
+            {
+                "name": p,
+                "queries": [
+                    f"{p} official application page",
+                    f"{p} deadline 2026",
+                    f"{p} eligibility for Indian students",
+                ],
+                "official_domain_hint": ""
+            }
+            for p in MUST_HAVE_PROGRAMS
+        ]
 
     combined = data.get("must_have", []) + data.get("additional", [])
+
     print(f"  ✅ Generated queries for {len(combined)} programs.")
     return combined
 
-
+async def discover_300_links():
+    """Loops through queries and pages to find a massive link set."""
+    all_links_with_scores = []
+    seen_links = set()
+    async with httpx.AsyncClient() as client:
+        for query in SEARCH_QUERIES:
+            for page in range(1, 4): # Get 3 pages per query for wider reach
+                print(f"Searching: '{query}' (Page {page})")
+                payload = {"q": query, "gl": "in", "num": 50, "page": page}
+                headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
+                try:
+                    resp = await client.post("https://google.serper.dev/search", json=payload, headers=headers)
+                    results = resp.json().get('organic', [])
+                    for r in results:
+                        link = r['link']
+                        
+                        # Apply Point 2: Filter out blacklist and duplicates
+                        if link not in seen_links and is_valid_source(link) and not link.lower().endswith('.pdf'):
+                            context = (r.get('title', '') + r.get('snippet', '')).lower()
+                            keywords = ['intern', 'fellow', 'scholar', 'trainee', 'opportunity']
+                            
+                            if any(k in context for k in keywords):
+                                score = get_domain_score(link) # Use your scoring logic
+                                all_links_with_scores.append((score, link))
+                                seen_links.add(link)
+                    await asyncio.sleep(0.5)
+                except Exception as e: print(f"Search Error: {e}")
+                
 # ─────────────────────────── STEP 2: SERPER SEARCH ───────────────
 
 async def serper_search(query: str, client: httpx.AsyncClient) -> list[str]:

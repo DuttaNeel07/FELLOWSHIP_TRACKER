@@ -43,7 +43,8 @@ async def serve_frontend():
 async def get_fellowships(
     tag:    str  = Query(None, description="Filter by tag e.g. open-source, research"),
     open:   bool = Query(None, description="Filter by is_open status"),
-    search: str  = Query(None, description="Search by name or org"),
+    search: str  = Query(None, description="Search by name or org"), 
+    mode:   str  = Query(None, description="Search by mode e.g. open-now, remote"),
     limit:  int  = Query(100, le=200),
 ):
     query_filter = {}

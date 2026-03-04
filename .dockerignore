@@ -1,0 +1,6 @@
+.git
+.github
+.scraper.log
+__pycache__
+.env
+vercel.json

@@ -17,6 +17,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
 from groq import Groq
+from scraper.discord import send_discord_notification
 
 # ─────────────────────────── ENV SETUP ───────────────────────────
 env_path = Path(__file__).parent.parent / '.env'
@@ -413,7 +414,12 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
                 "trust_score":  score,
                 "last_updated": datetime.now(timezone.utc),
             }
-            await collection.update_one({"apply_link": link}, {"$set": doc}, upsert=True)
+            result_db = await collection.update_one({"apply_link": link}, {"$set": doc}, upsert=True)
+
+            if result_db.upserted_id is not None:
+              print(f"  🔔 New opportunity! Sending Discord notification...")
+              await send_discord_notification(doc)
+
             print(f"  ✅ Saved: {doc['name']}  |  Deadline: {doc['deadline']}")
 
         except asyncio.TimeoutError:

@@ -1,8 +1,3 @@
-"""
-AI-Powered Fellowship & Internship Scraper
-==========================================
-"""
-
 import os
 import re
 import json
@@ -107,7 +102,7 @@ def ask_ai(prompt: str, max_tokens: int = 2048) -> str:
                 print(f"  ⏳ Rate limited. Waiting {wait}s...")
                 time.sleep(wait)
             else:
-                print(f"  ❌ Groq error: {err[:300]}")
+                print(f"Groq error: {err[:300]}")
                 return ""
     return ""
 
@@ -129,7 +124,7 @@ async def get_existing_urls() -> set:
     async for doc in cursor:
         if doc.get("apply_link"):
             existing.add(doc["apply_link"])
-    print(f"  📋 Found {len(existing)} already-scraped URLs in DB.")
+    print(f"Found {len(existing)} already-scraped URLs in DB.")
     return existing
 
 
@@ -161,7 +156,7 @@ def normalize_url(url: str) -> str:
     return urlunparse(clean).rstrip("/")
 
 def generate_queries_with_ai() -> list[dict]:
-    print("\n🤖 Gemini is generating search queries...")
+    print("\nGemini is generating search queries...")
     programs_list = "\n".join(f"- {p}" for p in MUST_HAVE_PROGRAMS)
 
     prompt = f"""You are helping find tech fellowships for Indian CS students in Bangalore.
@@ -188,18 +183,18 @@ Return ONLY this JSON with no extra text or markdown:
 
     raw = ask_ai(prompt, max_tokens=3000)
     if not raw:
-        print("  ⚠️  Gemini unavailable, using fallback queries.")
+        print("Gemini unavailable, using fallback queries.")
         return [{"name": p, "queries": [f"{p} 2026 official application", f"{p} deadline 2026"]}
                 for p in MUST_HAVE_PROGRAMS]
 
     data = safe_parse_json(raw)
     if not data or not isinstance(data, dict):
-        print("  ⚠️  JSON parse failed, using fallback queries.")
+        print("JSON parse failed, using fallback queries.")
         return [{"name": p, "queries": [f"{p} 2026 official application", f"{p} deadline 2026"]}
                 for p in MUST_HAVE_PROGRAMS]
 
     combined = data.get("must_have", []) + data.get("additional", [])
-    print(f"  ✅ Generated queries for {len(combined)} programs.")
+    print(f"Generated queries for {len(combined)} programs.")
     return combined
 
 async def serper_search(query: str, client: httpx.AsyncClient) -> list[str]:
@@ -217,7 +212,7 @@ async def serper_search(query: str, client: httpx.AsyncClient) -> list[str]:
         ]
 
     except Exception as e:
-        print(f"  ⚠️  Serper error: {e}")
+        print(f"Serper error: {e}")
         return []
 
 
@@ -225,7 +220,7 @@ async def collect_links(programs: list[dict]) -> list[tuple[int, str]]:
     seen, scored = set(), []
     async with httpx.AsyncClient() as http:
         for prog in programs:
-            print(f"  🔍 Searching: {prog['name']}")
+            print(f"Searching: {prog['name']}")
             for query in prog.get("queries", []):
                 for link in await serper_search(query, http):
                     link = normalize_url(link)
@@ -238,7 +233,7 @@ async def collect_links(programs: list[dict]) -> list[tuple[int, str]]:
                         scored.append((score, link))
                 await asyncio.sleep(0.5)
     scored.sort(key=lambda x: x[0], reverse=True)
-    print(f"\n  📦 Collected {len(scored)} unique links.\n")
+    print(f"\nCollected {len(scored)} unique links.\n")
     return scored
 
 def deduplicate_by_domain(scored_links: list[tuple[int, str]], max_per_domain: int = 1) -> list[tuple[int, str]]:
@@ -256,7 +251,7 @@ def deduplicate_by_domain(scored_links: list[tuple[int, str]], max_per_domain: i
             deduped.append((score, url))
             domain_count[domain] = count + 1
 
-    print(f"  🧹 Deduplicated: {len(scored_links)} → {len(deduped)} links (max {max_per_domain} per domain)\n")
+    print(f"Deduplicated: {len(scored_links)} → {len(deduped)} links (max {max_per_domain} per domain)\n")
     return deduped
 
 
@@ -300,7 +295,7 @@ def ai_relevance_check(links: list[str]) -> list[str]:
     if not links:
         return []
 
-    print(f"🤖 AI filtering {len(links)} links in batches...")
+    print(f"AI filtering {len(links)} links in batches...")
     kept = []
     batch_size = 25
 
@@ -343,7 +338,7 @@ URLs:
         kept.extend(batch_kept)
         print(f"  Batch {i//batch_size + 1}: kept {len(batch_kept)}/{len(batch)}")
 
-    print(f"  ✅ Total kept: {len(kept)} / {len(links)} links.\n")
+    print(f"Total kept: {len(kept)} / {len(links)} links.\n")
     return kept
 
 
@@ -357,7 +352,7 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
             if not result.success or len(result.markdown) < 300:
                 return
             if score < 80 and result.markdown.count("](") > 80:
-                print(f"  🗑️  Skipping aggregator: {link}")
+                print(f"Skipping aggregator: {link}")
                 return
             
             links = re.findall(r'https?://[^\s)"]+', result.markdown)
@@ -386,7 +381,7 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
                 details = ai_extract_details(result.markdown, link)
 
             if not details.get("is_opportunity"):
-                print(f"  ⛔ Skipping non-opportunity page: {link}")
+                print(f"Skipping non-opportunity page: {link}")
                 return
 
             details.pop("is_opportunity", None)
@@ -417,15 +412,15 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
             result_db = await collection.update_one({"apply_link": link}, {"$set": doc}, upsert=True)
 
             if result_db.upserted_id is not None:
-              print(f"  🔔 New opportunity! Sending Discord notification...")
+              print(f"New opportunity! Sending Discord notification...")
               await send_discord_notification(doc)
 
-            print(f"  ✅ Saved: {doc['name']}  |  Deadline: {doc['deadline']}")
+            print(f"Saved: {doc['name']}  |  Deadline: {doc['deadline']}")
 
         except asyncio.TimeoutError:
-            print(f"  ⏱️  Timeout: {link}")
+            print(f"Timeout: {link}")
         except Exception as e:
-            print(f"  ❌ Error ({link}): {e}")
+            print(f"Error ({link}): {e}")
 
 def ai_extract_details(page_text: str, url: str) -> dict:
 
@@ -500,11 +495,11 @@ async def main():
         "queries": [q],
         "official_domain_hint": ""
     })
-    print("\n📡 Running web searches...\n")
+    print("\n Running web searches...\n")
     scored_links = await collect_links(programs)
 
     if not scored_links:
-        print("❌ No links found. Check SERPER_API_KEY in .env")
+        print(" No links found. Check SERPER_API_KEY in .env")
         return
 
     scored_links  = deduplicate_by_domain(scored_links, max_per_domain=2)
@@ -516,13 +511,13 @@ async def main():
     existing_urls = await get_existing_urls()
     
     fresh_links = [(sc, url) for sc, url in scored_links if url not in existing_urls]
-    print(f"  🆕 {len(fresh_links)} new links to process ({len(scored_links) - len(fresh_links)} already in DB, skipping)\n")
+    print(f" {len(fresh_links)} new links to process ({len(scored_links) - len(fresh_links)} already in DB, skipping)\n")
 
     top_urls   = [url for _, url in fresh_links[:150]]
     final_urls = top_urls
     score_map  = {url: sc for sc, url in scored_links}
 
-    print(f"\n🚀 Crawling {len(final_urls)} pages...\n")
+    print(f"\n Crawling {len(final_urls)} pages...\n")
     semaphore = asyncio.Semaphore(3)
     run_cfg   = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
@@ -539,7 +534,7 @@ async def main():
         ]
         await asyncio.gather(*tasks)
 
-    print("\n🎉 Done! Database updated.")
+    print("\n Done! Database updated.")
 
 
 if __name__ == "__main__":

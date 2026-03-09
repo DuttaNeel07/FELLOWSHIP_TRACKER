@@ -1,28 +1,59 @@
-FROM python:3.11-slim
+
+# Stage 1 —compile wheels & install Playwright browser
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scraper/requirements.txt .
+RUN pip install --no-cache-dir --no-compile --prefix=/install -r requirements.txt
+
+RUN find /install -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null; \
+    find /install -type d -name 'tests' -exec rm -rf {} + 2>/dev/null; \
+    find /install -type d -name 'test' -exec rm -rf {} + 2>/dev/null; \
+    find /install -type d -name 'docs' -exec rm -rf {} + 2>/dev/null; \
+    find /install -type f -name '*.pyi' -delete 2>/dev/null; \
+    true
+
+ENV PATH="/install/bin:$PATH"
+ENV PYTHONPATH="/install/lib/python3.11/site-packages"
+RUN playwright install chromium \
+    && rm -rf /root/.cache/ms-playwright/*/chrome-linux/MEIPreload \
+    && find /root/.cache/ms-playwright -name 'ffmpeg-*' -delete 2>/dev/null; true
+
+
+# Stage 2 — runtime: lean image with only what's needed to run                 
+FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    # Playwright system deps
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
     libasound2 libpango-1.0-0 libpangocairo-1.0-0 \
+    libxshmfence1 libx11-xcb1 libxcb1 libxext6 libxfixes3 \
+    libx11-6 libxcb-dri3-0 libxss1 fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-COPY scraper/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /install /usr/local
 
-# Install Chromium for crawl4ai — must run AFTER pip install
-RUN playwright install chromium
+RUN pip uninstall -y pip setuptools 2>/dev/null; true
+
+COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
 
 COPY scraper ./scraper
 
 WORKDIR /app/scraper
 
-# Secrets must come in via --env-file or K8s secretRef — never bake them in
-CMD ["python", "main.py"]
+ENV SCRAPE_MODE=full
+CMD ["sh", "-c", "python main.py --mode $SCRAPE_MODE"]

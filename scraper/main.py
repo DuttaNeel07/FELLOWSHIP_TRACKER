@@ -1,3 +1,9 @@
+"""
+AI-Powered Fellowship & Internship Scraper
+==========================================
+"""
+
+import argparse
 import os
 import re
 import json
@@ -472,30 +478,42 @@ async def ensure_indexes():
 async def ping_mongo():
     await mongo_client.admin.command("ping")
 
-async def main():
+async def main(mode: str = "full"):
     await ping_mongo()
     await ensure_indexes()
     print("=" * 60)
-    print("  FELLOWSHIP TRACKER — AI MODE")
+    print(f"  FELLOWSHIP TRACKER — {mode.upper()} MODE")
     print(f"  Model: {GROQ_MODEL}")
     print("=" * 60)
 
-    programs     = generate_queries_with_ai()
+    programs = []
 
-    for q in DISCOVERY_QUERIES:
-        programs.append({
-        "name": "Discovery",
-        "queries": [q],
-        "official_domain_hint": ""
-    })
+    # Must-have programs — heavy AI query generation, run weekly
+    if mode in ("weekly", "full"):
+        print("\n📌 Including must-have programs (weekly)")
+        programs.extend(generate_queries_with_ai())
 
-    for q in generate_dynamic_queries():
-        programs.append({
-        "name": "DynamicSearch",
-        "queries": [q],
-        "official_domain_hint": ""
-    })
-    print("\n Running web searches...\n")
+    # Discovery + dynamic queries — lightweight, run daily
+    if mode in ("daily", "full"):
+        print("\n🔎 Including discovery queries (daily)")
+        for q in DISCOVERY_QUERIES:
+            programs.append({
+                "name": "Discovery",
+                "queries": [q],
+                "official_domain_hint": ""
+            })
+        for q in generate_dynamic_queries():
+            programs.append({
+                "name": "DynamicSearch",
+                "queries": [q],
+                "official_domain_hint": ""
+            })
+
+    if not programs:
+        print("❌ No programs to search. Check --mode flag.")
+        return
+
+    print("\n📡 Running web searches...\n")
     scored_links = await collect_links(programs)
 
     if not scored_links:
@@ -538,4 +556,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Fellowship Tracker Scraper")
+    parser.add_argument(
+        "--mode",
+        choices=["daily", "weekly", "full"],
+        default="full",
+        help="daily = discovery queries only, weekly = must-have programs only, full = everything (default)",
+    )
+    args = parser.parse_args()
+    asyncio.run(main(mode=args.mode))

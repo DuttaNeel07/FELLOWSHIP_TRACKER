@@ -53,7 +53,8 @@ COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
 
 COPY scraper ./scraper
 
-WORKDIR /app/scraper
+WORKDIR /app
 
-ENV SCRAPE_MODE=full
-CMD ["sh", "-c", "python main.py --mode $SCRAPE_MODE"]
+ENV SCRAPE_MODE=daily
+ENV PYTHONPATH=/app
+CMD ["sh", "-c", "python scraper/main.py --mode $SCRAPE_MODE"]

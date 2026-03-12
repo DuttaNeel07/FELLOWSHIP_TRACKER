@@ -11,3 +11,4 @@ yarn-error.log*
 data/
 downloads/
 .DS_Store
+k8s/secrets.yaml

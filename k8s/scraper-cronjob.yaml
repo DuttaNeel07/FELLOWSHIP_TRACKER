@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scraper-daily
+spec:
+  # Runs at 00:00 UTC (5:30 AM IST) every day
+  schedule: "0 0 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: scraper
+            image: fellowship-scraper1.3
+            imagePullPolicy: IfNotPresent
+            envFrom:
+            - secretRef:
+                name: scraper-secrets
+            env:
+            - name: SCRAPE_MODE
+              value: "daily"
+          restartPolicy: OnFailure
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scraper-weekly
+spec:
+  # Runs at 00:00 UTC (5:30 AM IST) every Sunday (0)
+  schedule: "0 0 * * 0"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: scraper
+            image: engineel/fellowship-scraper:v1
+            imagePullPolicy: Always
+            envFrom:
+            - secretRef:
+                name: scraper-secrets
+            env:
+            - name: SCRAPE_MODE
+              value: "weekly"
+          restartPolicy: OnFailure

@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: fellowship-api-service
+  name: fellowship-api
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: fellowship-api
   ports:
     - protocol: TCP
-      port: 80          # The port exposed externally
-      targetPort: 8000  # The port your FastAPI app runs on internally
+      port: 80          
+      targetPort: 8000  

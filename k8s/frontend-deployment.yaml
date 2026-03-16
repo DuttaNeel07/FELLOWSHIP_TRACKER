@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fellowship-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fellowship-frontend
+  template:
+    metadata:
+      labels:
+        app: fellowship-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: engineel/fellowship-frontend:v1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        env:
+        - name: BACKEND_URL
+          value: "http://fellowship-api:80"

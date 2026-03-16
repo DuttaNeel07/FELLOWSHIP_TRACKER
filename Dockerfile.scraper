@@ -28,7 +28,7 @@ RUN playwright install chromium \
     && find /root/.cache/ms-playwright -name 'ffmpeg-*' -delete 2>/dev/null; true
 
 
-# Stage 2 — runtime: lean image with only what's needed to run                 
+             
 FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1

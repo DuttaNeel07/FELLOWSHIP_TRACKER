@@ -107,7 +107,7 @@
     // ── Fetch stats ─────────────────────────────────────────────
     async function fetchStats() {
         try {
-            const r = await fetch("/api/stats");
+            const r = await fetch("/api/stats")
             const s = await r.json();
             document.getElementById("stats-bar").innerHTML = `
                 <span>TOTAL <span class="pb-green font-bold">${s.total}</span></span>
@@ -122,7 +122,7 @@
     // ── Fetch fellowships ───────────────────────────────────────
     async function fetchFellowships() {
         try {
-            const r = await fetch(API + "?limit=200");
+            const r = await fetch(API + "?limit=1000");
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             allData = await r.json();
             renderTable(allData);

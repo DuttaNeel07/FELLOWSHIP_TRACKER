@@ -45,7 +45,7 @@ async def get_fellowships(
     open:   bool = Query(None, description="Filter by is_open status"),
     search: str  = Query(None, description="Search by name or org"), 
     mode:   str  = Query(None, description="Search by mode e.g. open-now, remote"),
-    limit:  int  = Query(100, le=200),
+    limit:  int  = Query(1000, le=2000),
 ):
     query_filter = {}
 

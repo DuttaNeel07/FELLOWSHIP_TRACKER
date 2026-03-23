@@ -41,7 +41,7 @@ GROQ_MODEL  = "llama-3.3-70b-versatile"
 STUDENT_PROFILE = {
     "location": "Bangalore, Karnataka, India",
     "education": "B.Tech / B.E. (undergraduate) or M.Tech (postgraduate)",
-    "domains": ["computer science", "software engineering", "AI/ML", "open source", "research"],
+    "domains": ["computer science", "software engineering", "AI/ML", "open source", "research", "hackathons", "competitive programming"],
     "year": "2025-2026 cycle",
 }
 
@@ -60,6 +60,10 @@ MUST_HAVE_PROGRAMS = [
     "SRFP - JNCASR Summer Research Fellowship",
     "SRIP - IIT Gandhinagar Summer Research Internship",
     "MSR - Microsoft Research India Fellowship",
+    "Smart India Hackathon (SIH)",
+    "EthIndia",
+    "ICPC India Regionals",
+    "Meta Hacker Cup",
 ]
 
 BLACKLISTED_DOMAINS = {
@@ -77,6 +81,9 @@ DISCOVERY_QUERIES = [
     "engineering fellowship for students 2026",
     "research internship Bangalore computer science",
     "remote AI fellowship students",
+    "upcoming hackathons in Bangalore 2026",
+    "competitive programming contests India",
+    "student hackathons Bangalore apply",
 ]
 
 DISCOVERY_DOMAINS = [
@@ -125,11 +132,18 @@ def safe_parse_json(raw: str):
 
 async def get_existing_urls() -> set:
     """Fetch all URLs already stored in MongoDB."""
-    cursor = collection.find({}, {"apply_link": 1, "_id": 0})
     existing = set()
+    
+    cursor = collection.find({}, {"apply_link": 1, "_id": 0})
     async for doc in cursor:
         if doc.get("apply_link"):
             existing.add(doc["apply_link"])
+            
+    cursor2 = discovered_collection.find({"is_processed": True}, {"apply_link": 1, "_id": 0})
+    async for doc in cursor2:
+        if doc.get("apply_link"):
+            existing.add(doc["apply_link"])
+            
     print(f"Found {len(existing)} already-scraped URLs in DB.")
     return existing
 
@@ -144,9 +158,10 @@ def get_domain_score(url: str) -> int:
     tier2 = ["lfx.linuxfoundation.org", "summerofcode.withgoogle.com",
              "cncf.io", "summerofbitcoin.org", "fossunited.org",
              "jncasr.ac.in", "iitgn.ac.in", "ghc.anitab.org",
-             "outreachy.org", "mlh.io", "anitab.org"]
+             "outreachy.org", "mlh.io", "anitab.org", "unstop.com",
+             "devfolio.co", "hackerearth.com", "codeforces.com", "codechef.com", "leetcode.com"]
     if any(t in u for t in tier2): return 98
-    if any(a in u for a in ["internshala", "unstop", "naukri", "glassdoor", "indeed"]): return 30
+    if any(a in u for a in ["internshala", "naukri", "glassdoor", "indeed"]): return 30
     return 50
 
 
@@ -165,7 +180,7 @@ def generate_queries_with_ai() -> list[dict]:
     print("\nGemini is generating search queries...")
     programs_list = "\n".join(f"- {p}" for p in MUST_HAVE_PROGRAMS)
 
-    prompt = f"""You are helping find tech fellowships for Indian CS students in Bangalore.
+    prompt = f"""You are helping find tech fellowships, hackathons, and competitive programming contests for Indian CS students in Bangalore.
 
 For each program below, generate exactly 3 Google search queries:
 1. One targeting the official application page
@@ -280,14 +295,16 @@ def generate_dynamic_queries():
     topics = [
         "AI", "machine learning", "cybersecurity",
         "software engineering", "data science",
-        "open source"
+        "open source", "hackathons", "competitive programming"
     ]
 
     templates = [
         "{} fellowship students 2026",
         "{} internship undergraduate 2026",
         "{} research internship apply",
-        "{} student mentorship program"
+        "{} student mentorship program",
+        "{} hackathon Bangalore 2026",
+        "{} programming contest"
     ]
 
     queries = []
@@ -320,9 +337,9 @@ KEEP if the URL could lead to:
 - A blog post or announcement FROM the official program org (e.g. cncf.io/blog)
 
 SKIP ONLY if clearly:
-- A job aggregator listing (Naukri, Internshala, Unstop, Glassdoor, Indeed)
+- A job aggregator listing (Naukri, Internshala, Glassdoor, Indeed)
 - Pure social media post
-- Completely unrelated to fellowships/internships
+- Completely unrelated to fellowships/internships/hackathons/contests
 
 Return ONLY a JSON array of numbers to keep. Example: [1, 2, 4, 5, 7]
 No explanation, no markdown.
@@ -355,12 +372,30 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
             result = await asyncio.wait_for(
                 crawler.arun(url=link, config=run_cfg), timeout=60.0
             )
+            
+            # Always mark the link as processed to avoid re-scraping in the future
+            await discovered_collection.update_one(
+                {"apply_link": link},
+                {"$set": {
+                    "is_processed": True,
+                    "last_updated": datetime.now(timezone.utc)
+                }},
+                upsert=True
+            )
+
             if not result.success or len(result.markdown) < 300:
                 return
             if score < 80 and result.markdown.count("](") > 80:
                 print(f"Skipping aggregator: {link}")
                 return
             
+            # Quick keyword pre-filter to save Groq tokens (900+ tokens saved per irrelevant page)
+            lower_markdown = result.markdown.lower()
+            keywords = ["hackathon", "fellowship", "internship", "research", "mentorship", "scholarship", "contest", "competitive programming", "prize", "stipend", "apply"]
+            if not any(k in lower_markdown for k in keywords):
+                print(f"Skipping (no relevant keywords): {link}")
+                return
+
             links = re.findall(r'https?://[^\s)"]+', result.markdown)
 
             for l in links[:10]:
@@ -379,6 +414,7 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
                     "name": "Discovered Page",
                     "apply_link": l,
                     "trust_score": score - 10,
+                    "is_processed": False,
                     "last_updated": datetime.now(timezone.utc)
                 }},
                 upsert=True
@@ -415,6 +451,15 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
                 "trust_score":  score,
                 "last_updated": datetime.now(timezone.utc),
             }
+            
+            # Strict duplicate check by exact name phrase match
+            existing_opp = await collection.find_one({
+                "name": {"$regex": f"^{re.escape(doc['name'])}$", "$options": "i"}
+            })
+            if existing_opp:
+                print(f"Skipping duplicate insertion: Opportunity '{doc['name']}' already exists.")
+                return
+
             result_db = await collection.update_one({"apply_link": link}, {"$set": doc}, upsert=True)
 
             if result_db.upserted_id is not None:
@@ -434,7 +479,8 @@ def ai_extract_details(page_text: str, url: str) -> dict:
 Extract opportunity data from this webpage.
 
 If the page is NOT about a fellowship, internship,
-research program, mentorship, or scholarship,
+research program, mentorship, scholarship, hackathon, or
+competitive programming contest,
 return:
 
 {{ "is_opportunity": false }}

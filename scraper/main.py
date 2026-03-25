@@ -4,13 +4,14 @@ AI-Powered Fellowship & Internship Scraper
 """
 
 import argparse
+import calendar
 import os
 import re
 import json
 import asyncio
 import time
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -60,11 +61,41 @@ MUST_HAVE_PROGRAMS = [
     "SRFP - JNCASR Summer Research Fellowship",
     "SRIP - IIT Gandhinagar Summer Research Internship",
     "MSR - Microsoft Research India Fellowship",
+    # ── Hackathons ──
     "Smart India Hackathon (SIH)",
     "EthIndia",
+    "HackMIT",
+    "MLH Global Hack Week",
+    "Hackverse NITK",
+    "HackCBS",
+    "Hacktoberfest",
+    "ETHGlobal",
+    "Devfolio hackathons",
+    "HackBangalore",
+    "Bangalore Hackathon Week",
+    "Junction Asia Hackathon",
+    # ── Competitive Programming ──
     "ICPC India Regionals",
     "Meta Hacker Cup",
+    "CodeChef Starters",
+    "AtCoder Beginner Contest",
+    "HackerEarth Circuits",
+    "Topcoder SRM",
 ]
+
+# Patterns for transient/recurring contests that shouldn't be stored individually
+SKIP_TRANSIENT_PATTERNS = [
+    re.compile(r"codeforces\s+(round|div)", re.IGNORECASE),
+    re.compile(r"leetcode\s+weekly\s+contest", re.IGNORECASE),
+    re.compile(r"leetcode\s+biweekly\s+contest", re.IGNORECASE),
+    re.compile(r"codechef\s+starters\s+\d", re.IGNORECASE),
+    re.compile(r"atcoder\s+beginner\s+contest\s+\d", re.IGNORECASE),
+    re.compile(r"atcoder\s+regular\s+contest\s+\d", re.IGNORECASE),
+]
+
+def _is_transient_contest(name: str) -> bool:
+    """Return True if the opportunity is a recurring weekly/biweekly contest."""
+    return any(pat.search(name) for pat in SKIP_TRANSIENT_PATTERNS)
 
 BLACKLISTED_DOMAINS = {
     "instagram.com", "facebook.com", "twitter.com", "x.com",
@@ -72,19 +103,44 @@ BLACKLISTED_DOMAINS = {
     "quora.com", "medium.com", "t.co", "bit.ly",
 }
 
-DISCOVERY_QUERIES = [
-    "computer science fellowship 2026 apply",
-    "AI internship for students 2026",
-    "summer research program computer science 2026",
-    "undergraduate research internship India 2026",
-    "open source mentorship program 2026",
-    "engineering fellowship for students 2026",
-    "research internship Bangalore computer science",
-    "remote AI fellowship students",
-    "upcoming hackathons in Bangalore 2026",
-    "competitive programming contests India",
-    "student hackathons Bangalore apply",
-]
+def build_discovery_queries() -> list[str]:
+    """Generate search queries with current month/year so results are always timely."""
+    today = date.today()
+    year = today.year
+    cur_month = today.strftime("%B")       # e.g. "March"
+    next_month = date(today.year + (1 if today.month == 12 else 0),
+                      (today.month % 12) + 1, 1).strftime("%B")
+
+    return [
+        # Fellowships
+        f"computer science fellowship {year} apply",
+        f"AI internship for students {year}",
+        f"summer research program computer science {year}",
+        f"undergraduate research internship India {year}",
+        f"open source mentorship program {year}",
+        f"engineering fellowship for students {year}",
+        "research internship Bangalore computer science",
+        "remote AI fellowship students",
+        # Hackathons – dynamic months
+        f"upcoming hackathons Bangalore {year}",
+        f"upcoming hackathons India {cur_month} {next_month} {year}",
+        f"hackathon registration open India {year}",
+        "student hackathon Bangalore register",
+        "devfolio upcoming hackathons",
+        f"unstop upcoming hackathon {year}",
+        f"MLH hackathon schedule {year}",
+        f"college hackathon India {year}",
+        f"web3 hackathon India {year}",
+        f"AI ML hackathon India {year}",
+        # Competitive Programming
+        f"competitive programming contest schedule {year}",
+        "codeforces upcoming rounds",
+        f"codechef contests {year}",
+        f"ICPC regionals India {year}",
+        "leetcode contest schedule",
+        "hackerearth upcoming challenge",
+        "atcoder upcoming contest",
+    ]
 
 DISCOVERY_DOMAINS = [
     "https://iisc.ac.in",
@@ -95,6 +151,12 @@ DISCOVERY_DOMAINS = [
     "https://linuxfoundation.org",
     "https://mlh.io",
     "https://outreachy.org",
+    "https://devfolio.co",
+    "https://unstop.com",
+    "https://hackerearth.com",
+    "https://codeforces.com",
+    "https://codechef.com",
+    "https://leetcode.com",
 ]
 
 def ask_ai(prompt: str, max_tokens: int = 2048) -> str:
@@ -218,12 +280,16 @@ Return ONLY this JSON with no extra text or markdown:
     print(f"Generated queries for {len(combined)} programs.")
     return combined
 
-async def serper_search(query: str, client: httpx.AsyncClient) -> list[str]:
+async def serper_search(query: str, client: httpx.AsyncClient, tbs: str = "qdr:m3") -> list[str]:
+    """Search via Serper with time-based filtering (default: past 3 months)."""
     headers = {"X-API-KEY": SERPER_KEY, "Content-Type": "application/json"}
+    payload = {"q": query, "gl": "in", "num": 20}
+    if tbs:
+        payload["tbs"] = tbs
     try:
         resp = await client.post(
             "https://google.serper.dev/search",
-            json={"q": query, "gl": "in", "num": 20},
+            json=payload,
             headers=headers, timeout=15,
         )
         results = resp.json().get("organic", [])
@@ -237,13 +303,13 @@ async def serper_search(query: str, client: httpx.AsyncClient) -> list[str]:
         return []
 
 
-async def collect_links(programs: list[dict]) -> list[tuple[int, str]]:
+async def collect_links(programs: list[dict], tbs: str = "qdr:m3") -> list[tuple[int, str]]:
     seen, scored = set(), []
     async with httpx.AsyncClient() as http:
         for prog in programs:
             print(f"Searching: {prog['name']}")
             for query in prog.get("queries", []):
-                for link in await serper_search(query, http):
+                for link in await serper_search(query, http, tbs=tbs):
                     link = normalize_url(link)
                     if link not in seen:
                         seen.add(link)
@@ -288,29 +354,35 @@ def generate_domain_paths(domain_url):
         "/opportunities",
         "/summer-internship",
         "/students",
+        "/hackathons",
+        "/contests",
     ]
     return [base + p for p in paths]
 
 def generate_dynamic_queries():
+    year = date.today().year
     topics = [
         "AI", "machine learning", "cybersecurity",
         "software engineering", "data science",
-        "open source", "hackathons", "competitive programming"
+        "open source", "hackathons", "competitive programming",
+        "blockchain", "web3", "cloud computing",
     ]
 
     templates = [
-        "{} fellowship students 2026",
-        "{} internship undergraduate 2026",
-        "{} research internship apply",
-        "{} student mentorship program",
-        "{} hackathon Bangalore 2026",
-        "{} programming contest"
+        "{{}} fellowship students {y}",
+        "{{}} internship undergraduate {y}",
+        "{{}} research internship apply",
+        "{{}} student mentorship program",
+        "{{}} hackathon Bangalore {y}",
+        "{{}} hackathon India upcoming registration open",
+        "{{}} programming contest {y}",
+        "{{}} coding challenge India",
     ]
 
     queries = []
     for t in topics:
         for template in templates:
-            queries.append(template.format(t))
+            queries.append(template.format(y=year).format(t))
 
     return queries
 
@@ -391,7 +463,9 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
             
             # Quick keyword pre-filter to save Groq tokens (900+ tokens saved per irrelevant page)
             lower_markdown = result.markdown.lower()
-            keywords = ["hackathon", "fellowship", "internship", "research", "mentorship", "scholarship", "contest", "competitive programming", "prize", "stipend", "apply"]
+            keywords = ["hackathon", "fellowship", "internship", "research", "mentorship",
+                        "scholarship", "contest", "competitive programming", "prize",
+                        "stipend", "register", "deadline", "coding challenge"]
             if not any(k in lower_markdown for k in keywords):
                 print(f"Skipping (no relevant keywords): {link}")
                 return
@@ -432,6 +506,12 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
             if not details:
                 return
 
+            # ── Reject expired opportunities ──
+            raw_deadline = details.get("deadline", "")
+            if _is_deadline_passed(raw_deadline):
+                print(f"Skipping expired opportunity: {link}  (deadline: {raw_deadline})")
+                return
+
             is_open = details.get("is_open")
             if isinstance(is_open, str):
                 is_open = is_open.lower() in ["true", "open", "yes"]
@@ -452,6 +532,11 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
                 "last_updated": datetime.now(timezone.utc),
             }
             
+            # Skip transient recurring contests
+            if _is_transient_contest(doc["name"]):
+                print(f"Skipping transient contest: {doc['name']}")
+                return
+
             # Strict duplicate check by exact name phrase match
             existing_opp = await collection.find_one({
                 "name": {"$regex": f"^{re.escape(doc['name'])}$", "$options": "i"}
@@ -473,17 +558,64 @@ async def process_link(crawler, run_cfg, link: str, score: int, semaphore: async
         except Exception as e:
             print(f"Error ({link}): {e}")
 
+def _is_deadline_passed(deadline_str: str) -> bool:
+    """Return True if the deadline date is clearly in the past."""
+    if not deadline_str:
+        return False
+    deadline_str = deadline_str.strip()
+    if deadline_str.lower() in ("check website", "rolling", "tba", "tbd", "not specified", ""):
+        return False
+
+    today = date.today()
+
+    # Try exact date formats
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y",
+                "%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y"):
+        try:
+            dt = datetime.strptime(deadline_str, fmt).date()
+            return dt < today
+        except ValueError:
+            continue
+
+    # Handle "Month Year" patterns (e.g. "December 2025", "Dec 2025")
+    for fmt in ("%B %Y", "%b %Y"):
+        try:
+            dt = datetime.strptime(deadline_str, fmt)
+            last_day = calendar.monthrange(dt.year, dt.month)[1]
+            return date(dt.year, dt.month, last_day) < today
+        except ValueError:
+            continue
+
+    # Handle bare year (e.g. "2025")
+    bare_year = re.fullmatch(r"(\d{4})", deadline_str)
+    if bare_year:
+        yr = int(bare_year.group(1))
+        if yr < today.year:
+            return True
+
+    return False
+
+
 def ai_extract_details(page_text: str, url: str) -> dict:
+    today = date.today().isoformat()   # e.g. 2026-03-25
+    cur_month = date.today().strftime("%B %Y")  # e.g. "March 2026"
 
     prompt = f"""
-Extract opportunity data from this webpage.
+Today's date is {today} ({cur_month}).
 
-If the page is NOT about a fellowship, internship,
-research program, mentorship, scholarship, hackathon, or
-competitive programming contest,
-return:
+You are extracting data for a professional opportunity tracker.
+Only extract REAL, NAMED programs — not generic advice articles, blog posts, or listicles.
 
-{{ "is_opportunity": false }}
+CRITICAL DATE RULES:
+- If the page mentions ANY deadline, registration close date, or event date that is BEFORE {today}, return {{ "is_opportunity": false }}.
+- If the page describes an event/program from a PREVIOUS year (e.g. 2024, 2025) and does NOT mention {date.today().year} or later, return {{ "is_opportunity": false }}.
+- If you cannot confirm the opportunity is CURRENTLY open for registration/application OR opens in the future, return {{ "is_opportunity": false }}.
+- When in doubt about dates, return {{ "is_opportunity": false }}.
+
+Also return {{ "is_opportunity": false }} if:
+- The page is a news article, opinion piece, or generic tips page
+- The page lists many opportunities but is not an official page for ONE specific program
+- The page is about results/winners of a past edition
 
 Otherwise return:
 
@@ -495,7 +627,8 @@ Otherwise return:
   "stipend": "Amount or Unpaid or Not Specified",
   "eligibility": "1-2 sentence summary",
   "mode": "Remote or In-Person or Hybrid",
-  "tags": ["tag1", "tag2"]
+  "is_open": true or false (based on whether the deadline is on or after {today}),
+  "tags": ["fellowship", "hackathon", "CP contest", etc.]
 }}
 
 URL:
@@ -524,9 +657,26 @@ async def ensure_indexes():
 async def ping_mongo():
     await mongo_client.admin.command("ping")
 
+async def cleanup_expired_entries():
+    """Mark opportunities with clearly-past deadlines as is_open=false."""
+    today = date.today()
+    cursor = collection.find({"is_open": True})
+    marked = 0
+    async for doc in cursor:
+        raw_deadline = doc.get("deadline", "")
+        if _is_deadline_passed(raw_deadline):
+            await collection.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {"is_open": False}}
+            )
+            marked += 1
+    if marked:
+        print(f"🧹 Marked {marked} expired entries as closed.")
+
 async def main(mode: str = "full"):
     await ping_mongo()
     await ensure_indexes()
+    await cleanup_expired_entries()
     print("=" * 60)
     print(f"  FELLOWSHIP TRACKER — {mode.upper()} MODE")
     print(f"  Model: {GROQ_MODEL}")
@@ -542,7 +692,7 @@ async def main(mode: str = "full"):
     # Discovery + dynamic queries — lightweight, run daily
     if mode in ("daily", "full"):
         print("\n🔎 Including discovery queries (daily)")
-        for q in DISCOVERY_QUERIES:
+        for q in build_discovery_queries():
             programs.append({
                 "name": "Discovery",
                 "queries": [q],
@@ -559,8 +709,9 @@ async def main(mode: str = "full"):
         print("❌ No programs to search. Check --mode flag.")
         return
 
-    print("\n📡 Running web searches...\n")
-    scored_links = await collect_links(programs)
+    tbs_filter = "qdr:m" if mode == "daily" else "qdr:m3"  # tighter for daily
+    print(f"\n📡 Running web searches (recency: {tbs_filter})...\n")
+    scored_links = await collect_links(programs, tbs=tbs_filter)
 
     if not scored_links:
         print(" No links found. Check SERPER_API_KEY in .env")

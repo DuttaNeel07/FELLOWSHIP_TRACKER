@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  mongodb:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  api:
+    image: engineel/fellowship-api:test
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017/fellowship_tracker
+    depends_on:
+      - mongodb
+
+  frontend:
+    image: engineel/fellowship-frontend:test
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+  scraper:
+    image: engineel/fellowship-scraper:test
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017/fellowship_tracker
+      - SERPER_API_KEY=your-serper-key
+      - GROQ_API_KEY=your-groq-key
+      - DISCORD_WEBHOOK_URL=your-discord-webhook
+      - SCRAPE_MODE=daily
+    depends_on:
+      - mongodb
+    profiles:
+      - scraper   # won't start automatically, run manually
+
+volumes:
+  mongo_data:
